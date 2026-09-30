@@ -26,7 +26,10 @@ const testFiles = [
 
 async function runTest(file) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, [file], { stdio: 'inherit' });
+    const proc = spawn(process.execPath, [file], { 
+      stdio: 'inherit',
+      env: { ...process.env, NODE_ENV: 'test', DATABASE_PATH: ':memory:' }
+    });
     proc.on('close', (code) => {
       if (code === 0) resolve();
       else reject(new Error(`Test file failed with exit code ${code}: ${file}`));

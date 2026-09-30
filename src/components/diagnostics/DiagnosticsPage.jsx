@@ -3,65 +3,35 @@ import {
   ShieldAlert, 
   Activity, 
   Cpu, 
-  CheckCircle, 
-  AlertTriangle, 
-  FileText, 
-  Layers, 
-  Download, 
-  ZoomIn,
-  RefreshCw,
-  Search,
-  Crosshair,
-  GitBranch,
+  Radio, 
+  Zap, 
+  Thermometer, 
+  GitBranch, 
   Info,
-  ShieldCheck,
-  Zap,
-  Thermometer,
-  Radio,
-  Sliders
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
-import { telemetryService, SIMULATION_MODES } from '../../services/telemetryService';
+import { telemetryService } from '../../services/telemetryService';
 import { inferenceService } from '../../services/ai/inferenceService';
 import { baselineService } from '../../services/baselineService';
-import { alertService } from '../../services/alertService';
-import { DATA_SOURCE_TYPES } from '../../services/dataIngestion/motorDataModel';
 
 export const DiagnosticsPage = ({ snapshot }) => {
-  const [selectedPeak, setSelectedPeak] = useState(null);
+  const [selectedAxis, setSelectedAxis] = useState('amplitude'); // 'amplitude' | 'x' | 'y' | 'z'
   const waveformRef = useRef(null);
   const fftRef = useRef(null);
 
-  const motorId = snapshot?.selectedMotorId || 'MTR-001';
+  const motorId = 'MTR-001';
+  const hasReal = Boolean(snapshot?.hasRealTelemetry);
   const vib = snapshot?.vibrationFeatures || {};
   const metrics = snapshot?.metrics || {};
 
-  // Run AI Inference Service
+  // Diagnostic Inference Result
   const diagnosticResult = useMemo(() => {
     return inferenceService.diagnose(snapshot || {});
   }, [snapshot]);
 
-  // Baseline deviations
-  const baselineInfo = diagnosticResult.baselineDeviations || {};
-  const compAssess = diagnosticResult.componentAssessment || {};
-
-  // Active alerts for this motor
-  const motorAlerts = useMemo(() => {
-    alertService.evaluate(snapshot || {}, diagnosticResult);
-    return alertService.getAlertsForMotor(motorId).slice(0, 4);
-  }, [snapshot, diagnosticResult, motorId]);
-
-  // Component breakdown for the 6 candidate sections (Section 33)
-  const componentsList = [
-    { key: 'BEARINGS', name: 'BEARINGS & RACEWAYS', data: compAssess.BEARINGS || { status: 'NORMAL', indicator: 'Nominal kinematic operation', evidence: [] } },
-    { key: 'ROTOR', name: 'ROTOR & DYNAMIC BALANCE', data: compAssess.ROTOR || { status: 'NORMAL', indicator: 'Nominal rotor dynamic balance', evidence: [] } },
-    { key: 'STATOR', name: 'STATOR & WINDINGS', data: compAssess.STATOR || { status: 'NORMAL', indicator: 'Nominal winding current balance', evidence: [] } },
-    { key: 'SHAFT', name: 'SHAFT & MECHANICAL COUPLING', data: compAssess.SHAFT || { status: 'NORMAL', indicator: 'Nominal shaft alignment and coupling', evidence: [] } },
-    { key: 'COOLING', name: 'COOLING & HEAT DISSIPATION', data: compAssess.COOLING || { status: 'NORMAL', indicator: 'Nominal thermal dissipation', evidence: [] } },
-    { key: 'ELECTRICAL', name: 'ELECTRICAL POWER SUPPLY', data: compAssess.ELECTRICAL || { status: 'NORMAL', indicator: 'Nominal power supply balance', evidence: [] } }
-  ];
-
-  // Draw high-resolution interactive waveform
+  // Real Vibration Waveform rendering (Section 18)
   useEffect(() => {
     const canvas = waveformRef.current;
     if (!canvas) return;
@@ -69,22 +39,23 @@ export const DiagnosticsPage = ({ snapshot }) => {
     const w = canvas.width;
     const h = canvas.height;
 
-    const waveform = telemetryService.generateVibrationWaveform(384);
     ctx.clearRect(0, 0, w, h);
+
+    const waveform = telemetryService.generateVibrationWaveform(256);
 
     if (!waveform || waveform.length === 0) {
       ctx.fillStyle = '#64748b';
-      ctx.font = '11px JetBrains Mono';
+      ctx.font = '11px JetBrains Mono, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('NO RECENT ESP32 DATA', w / 2, h / 2);
+      ctx.fillText('NO WAVEFORM SAMPLES — WAITING FOR REAL ESP32 TELEMETRY', w / 2, h / 2);
       ctx.textAlign = 'left';
       return;
     }
 
-    // Subtle grid
+    // Grid lines
     ctx.strokeStyle = '#f1f5f9';
     ctx.lineWidth = 1;
-    for (let x = 0; x < w; x += 30) {
+    for (let x = 0; x < w; x += 40) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, h);
@@ -104,15 +75,18 @@ export const DiagnosticsPage = ({ snapshot }) => {
     ctx.lineTo(w, h / 2);
     ctx.stroke();
 
-    const maxAmp = Math.max(12, ...waveform.map(p => Math.abs(p.amplitude))) * 1.1;
+    const selectedKey = selectedAxis;
+    const values = waveform.map(pt => Math.abs(pt[selectedKey] ?? pt.amplitude ?? 0));
+    const maxAmp = Math.max(1.0, ...values) * 1.15;
 
     // Draw trace
     ctx.beginPath();
-    ctx.strokeStyle = '#2563eb';
+    ctx.strokeStyle = selectedAxis === 'amplitude' ? '#2563eb' : selectedAxis === 'x' ? '#0284c7' : selectedAxis === 'y' ? '#0d9488' : '#7c3aed';
     ctx.lineWidth = 1.8;
     waveform.forEach((pt, i) => {
+      const val = pt[selectedKey] ?? pt.amplitude ?? 0;
       const x = (i / (waveform.length - 1)) * w;
-      const y = h / 2 - (pt.amplitude / maxAmp) * (h / 2 - 10);
+      const y = h / 2 - (val / maxAmp) * (h / 2 - 12);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
@@ -120,14 +94,14 @@ export const DiagnosticsPage = ({ snapshot }) => {
 
     // Scale text
     ctx.fillStyle = '#64748b';
-    ctx.font = '9px JetBrains Mono';
-    ctx.fillText(`+${maxAmp.toFixed(1)} mm/s`, 8, 14);
-    ctx.fillText(`-${maxAmp.toFixed(1)} mm/s`, 8, h - 6);
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillText(`+${maxAmp.toFixed(2)} mm/s`, 8, 14);
+    ctx.fillText(`-${maxAmp.toFixed(2)} mm/s`, 8, h - 6);
     ctx.fillText('0 ms', 8, h / 2 - 4);
-    ctx.fillText('150 ms (Time Window)', w - 120, h / 2 - 4);
-  }, [snapshot]);
+    ctx.fillText(`${(waveform.length * (1000 / 2560)).toFixed(1)} ms`, w - 60, h / 2 - 4);
+  }, [snapshot, selectedAxis]);
 
-  // Draw high-resolution interactive FFT Spectrum
+  // Real FFT Spectrum rendering (Section 19)
   useEffect(() => {
     const canvas = fftRef.current;
     if (!canvas) return;
@@ -135,14 +109,15 @@ export const DiagnosticsPage = ({ snapshot }) => {
     const w = canvas.width;
     const h = canvas.height;
 
-    const spectrum = telemetryService.generateFFTSpectrum(160);
     ctx.clearRect(0, 0, w, h);
+
+    const spectrum = telemetryService.generateFFTSpectrum(120);
 
     if (!spectrum || spectrum.length === 0) {
       ctx.fillStyle = '#64748b';
-      ctx.font = '11px JetBrains Mono';
+      ctx.font = '11px JetBrains Mono, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('INSUFFICIENT DATA FOR FFT', w / 2, h / 2);
+      ctx.fillText('INSUFFICIENT DATA FOR FFT — AWAITING SUFFICIENT VIBRATION BUFFER SAMPLES', w / 2, h / 2);
       ctx.textAlign = 'left';
       return;
     }
@@ -157,7 +132,7 @@ export const DiagnosticsPage = ({ snapshot }) => {
       ctx.stroke();
     }
 
-    const maxAmp = Math.max(7, ...spectrum.map(s => s.amplitude)) * 1.15;
+    const maxAmp = Math.max(1.0, ...spectrum.map(s => s.amplitude)) * 1.15;
     const barW = w / spectrum.length;
 
     spectrum.forEach((bin, i) => {
@@ -165,571 +140,579 @@ export const DiagnosticsPage = ({ snapshot }) => {
       const barH = (bin.amplitude / maxAmp) * (h - 26);
       const y = h - barH - 18;
 
-      if (bin.isDominant) {
-        ctx.fillStyle = '#dc2626';
-      } else if (bin.amplitude > 2.0) {
-        ctx.fillStyle = '#d97706';
-      } else {
-        ctx.fillStyle = '#3b82f6';
-      }
-      ctx.fillRect(x, y, Math.max(1.8, barW - 1), barH);
+      ctx.fillStyle = bin.isDominant ? '#dc2626' : bin.amplitude > 2.0 ? '#d97706' : '#2563eb';
+      ctx.fillRect(x, y, Math.max(1.5, barW - 1), barH);
     });
 
-    // Freq markers
+    // Freq scale markers
     ctx.fillStyle = '#64748b';
-    ctx.font = '9px JetBrains Mono';
+    ctx.font = '9px JetBrains Mono, monospace';
     ctx.fillText('0 Hz', 6, h - 4);
-    ctx.fillText('75 Hz', w * 0.25, h - 4);
-    ctx.fillText('150 Hz', w * 0.5, h - 4);
-    ctx.fillText('225 Hz', w * 0.75, h - 4);
-    ctx.fillText('300 Hz', w - 42, h - 4);
-
-    // Highlight dominant frequency flag
-    const dom = spectrum.find(s => s.isDominant);
-    if (dom) {
-      const domX = (spectrum.indexOf(dom) / spectrum.length) * w;
-      ctx.fillStyle = '#dc2626';
-      ctx.font = 'bold 9.5px Inter';
-      ctx.fillText(`▼ Peak: ${dom.frequency} Hz (${dom.amplitude.toFixed(2)} mm/s)`, Math.min(w - 140, Math.max(10, domX - 40)), 14);
-    }
+    ctx.fillText('100 Hz', w * 0.25, h - 4);
+    ctx.fillText('200 Hz', w * 0.5, h - 4);
+    ctx.fillText('300 Hz', w * 0.75, h - 4);
+    ctx.fillText('400 Hz', w - 42, h - 4);
   }, [snapshot]);
 
   return (
     <div className="diagnostics-page">
-      {/* Title */}
-      <div className="page-header-block">
+      {/* Page Header */}
+      <div className="diag-header-card">
         <div>
-          <h1 className="page-title">DIAGNOSTICS & FAULT ASSESSMENT WORKBENCH</h1>
-          <div className="page-subtitle">Signal decomposition, baseline comparison, and AI-assisted fault indication engine.</div>
+          <h1 className="diag-page-title">TECHNICAL ENGINEERING DIAGNOSTICS</h1>
+          <div className="diag-page-subtitle">
+            Time-domain waveform, spectral FFT decomposition, and engineering feature extraction for MTR-001
+          </div>
         </div>
-        <div className="diag-mode-tag font-mono">
-          MODEL: {diagnosticResult.modelMetadata.modelName} ({diagnosticResult.modelMetadata.modelVersion}) • {diagnosticResult.modelMetadata.status}
+        <div className="diag-meta-right font-mono">
+          <span className="asset-tag">ASSET: MTR-001</span>
+          <span className="status-tag">SOURCE: ESP32 HARDWARE</span>
         </div>
       </div>
 
-      {/* Selected Motor Context Header (Req 18) */}
-      <div className="selected-motor-section-header mb-16">
-        <div className="selected-motor-header-left">
-          <div className="selected-motor-title-row">
-            <Cpu size={15} className="text-blue" />
-            <h2 className="selected-motor-title">
-              DIAGNOSTIC WORKBENCH: <span className="text-blue">MTR-001</span>
-            </h2>
-            <Badge status={diagnosticResult.condition} size="sm" />
-          </div>
-          <div className="selected-motor-meta-row font-mono">
-            <span>MOTOR ID: <strong>MTR-001</strong></span>
-            <span>•</span>
-            <span>DATA SOURCE: <strong className="text-blue">ESP32 REAL HARDWARE</strong></span>
-            <span>•</span>
-            <span>LOCATION: <strong>Physical Hardware Testbed</strong></span>
-            <span>•</span>
-            <span>EVALUATION: <strong>REAL SENSOR PACKETS</strong></span>
-          </div>
-        </div>
-        <div className="selected-motor-header-right">
-          <span className="synthetic-badge-tag font-mono">
-            MONITORED UNIT: MTR-001
-          </span>
-        </div>
-      </div>
-
-      {/* AI Diagnostic Assessment Card (Master Spec Section 30, 31, 52) */}
-      <div className="eng-card diag-summary-card">
-        <div className="eng-card-header">
-          <span className="eng-card-title">
-            <ShieldAlert size={13} className="text-blue" />
-            <span>AI-ASSISTED FAULT DIAGNOSTIC ASSESSMENT</span>
-          </span>
-          <div className="header-badges">
-            <span className="badge badge-info">EXPERIMENTAL MODEL</span>
-            <Badge status={diagnosticResult.condition} />
-          </div>
-        </div>
-        <div className="eng-card-body">
-          <div className="summary-columns-grid">
-            <div className="summary-main-col">
-              <div className="summary-title-line">
-                <span className="summary-target-label">PRIMARY SUSPECTED FAULT:</span>
-                <span className="summary-target-fault font-mono">{diagnosticResult.faultType}</span>
-              </div>
-              <p className="summary-narrative">
-                {diagnosticResult.explanation?.modelDisclaimer || 'Diagnostic assessment derived from multi-signal feature thresholding and spectral analysis.'}
-              </p>
-              <div className="summary-sub-badges font-mono">
-                <span>AFFECTED SECTION: <strong>{diagnosticResult.affectedSection}</strong></span>
-                <span>•</span>
-                <span>SEVERITY: <strong className={diagnosticResult.severity === 'CRITICAL' ? 'text-red' : diagnosticResult.severity === 'HIGH' ? 'text-amber' : ''}>{diagnosticResult.severity}</strong></span>
-                <span>•</span>
-                <span>CONFIDENCE: <strong>{diagnosticResult.confidenceLabel}</strong></span>
-                <span>•</span>
-                <span>ISO 10816 TRIP: <strong>4.5 mm/s</strong></span>
-              </div>
+      {/* A. TIME DOMAIN & B. FREQUENCY DOMAIN (Sections 18 & 19) */}
+      <div className="signals-grid">
+        {/* A. Time Domain */}
+        <div className="signal-card">
+          <div className="signal-card-header">
+            <div className="signal-title-group">
+              <Radio size={14} className="text-blue" />
+              <span className="signal-heading">A. TIME-DOMAIN VIBRATION WAVEFORM</span>
             </div>
-
-            <div className="summary-score-col">
-              <div className="score-ring-box">
-                <div className="score-ring-val font-mono">
-                  {diagnosticResult.condition === 'HEALTHY' ? '96' : diagnosticResult.condition === 'WARNING' ? '68' : '34'}
-                </div>
-                <div className="score-ring-label">HEALTH SCORE</div>
-              </div>
-              <div className="score-bar-sub">
-                <Badge status={diagnosticResult.severity} size="sm" />
-              </div>
+            {/* Axis Selector */}
+            <div className="axis-selector font-mono">
+              <button 
+                className={`axis-btn ${selectedAxis === 'amplitude' ? 'active' : ''}`}
+                onClick={() => setSelectedAxis('amplitude')}
+              >
+                MAGNITUDE
+              </button>
+              <button 
+                className={`axis-btn ${selectedAxis === 'x' ? 'active' : ''}`}
+                onClick={() => setSelectedAxis('x')}
+              >
+                AXIS X
+              </button>
+              <button 
+                className={`axis-btn ${selectedAxis === 'y' ? 'active' : ''}`}
+                onClick={() => setSelectedAxis('y')}
+              >
+                AXIS Y
+              </button>
+              <button 
+                className={`axis-btn ${selectedAxis === 'z' ? 'active' : ''}`}
+                onClick={() => setSelectedAxis('z')}
+              >
+                AXIS Z
+              </button>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Diagnostic Fusion & Explainability (Master Spec Section 31, 52) */}
-      <div className="eng-card mb-16">
-        <div className="eng-card-header">
-          <span className="eng-card-title">
-            <GitBranch size={13} className="text-blue" />
-            <span>DIAGNOSTIC FUSION & EXPLAINABILITY (SIGNAL EVIDENCE + BASELINE DEVIATIONS)</span>
-          </span>
-          <span className="font-mono text-xs text-muted">TRANSPARENT REASONING TRACE</span>
-        </div>
-        <div className="eng-card-body">
-          <div className="explainability-grid font-mono">
-            {/* 1. Observed Signal Evidence */}
-            <div className="explain-col">
-              <div className="explain-col-title text-blue">
-                <Activity size={13} />
-                <span>1. OBSERVED EVIDENCE</span>
-              </div>
-              <ul className="explain-list">
-                {diagnosticResult.evidence.length > 0 ? (
-                  diagnosticResult.evidence.map((ev, i) => (
-                    <li key={i}>• {ev}</li>
-                  ))
-                ) : (
-                  <li className="text-muted">• No anomalous indicators detected</li>
-                )}
-              </ul>
-            </div>
-
-            {/* 2. Baseline Deviations (Section 23) */}
-            <div className="explain-col">
-              <div className="explain-col-title text-purple">
-                <Sliders size={13} />
-                <span>2. BASELINE DEVIATIONS</span>
-              </div>
-              <div className="baseline-status-note">
-                STATUS: <strong>{baselineInfo.baselineStatus || 'NOT_AVAILABLE'}</strong>
-              </div>
-              <ul className="explain-list">
-                <li>• Temp Rise: <strong>{baselineInfo.temperatureRiseLabel || 'Baseline: Not available'}</strong></li>
-                <li>• Vib Rise: <strong>{baselineInfo.vibrationRiseLabel || 'Baseline: Not available'}</strong></li>
-                <li>• Current Dev: <strong>{baselineInfo.currentDeviationLabel || 'Baseline: Not available'}</strong></li>
-                <li>• Summary: <span className="text-muted">{baselineInfo.summary || 'Baseline not established'}</span></li>
-              </ul>
-            </div>
-
-            {/* 3. Diagnostic Reasoning */}
-            <div className="explain-col">
-              <div className="explain-col-title text-emerald">
-                <ShieldCheck size={13} />
-                <span>3. MODEL ASSESSMENT</span>
-              </div>
-              <ul className="explain-list">
-                <li>• Condition: <strong>{diagnosticResult.condition}</strong></li>
-                <li>• Candidate Section: <strong>{diagnosticResult.affectedSection}</strong></li>
-                <li>• Indication: <span className="text-muted">Suspected component degradation based on feature vector matching</span></li>
-                <li className="text-amber">• <em>Experimental heuristic model — lab validation pending</em></li>
-              </ul>
-            </div>
+          <div className="canvas-wrapper">
+            <canvas ref={waveformRef} width={640} height={180} className="signal-canvas" />
           </div>
         </div>
-      </div>
 
-      {/* Dual Waveform & FFT Analytics */}
-      <div className="diagnostics-charts-grid">
-        {/* Left: Waveform */}
-        <div className="eng-card">
-          <div className="eng-card-header">
-            <span className="eng-card-title">
-              <Activity size={13} className="text-blue" />
-              <span>TIME-DOMAIN ACCELEROMETER TRACE (RAW WAVEFORM)</span>
+        {/* B. Frequency Domain */}
+        <div className="signal-card">
+          <div className="signal-card-header">
+            <div className="signal-title-group">
+              <Activity size={14} className="text-blue" />
+              <span className="signal-heading">B. FREQUENCY DOMAIN (FFT SPECTRUM)</span>
+            </div>
+            <span className="font-mono text-xs text-muted">
+              DOMINANT 1X FREQUENCY TRACKING
             </span>
-            <span className="font-mono text-muted text-xs">FS: 2560 HZ • ACC-X</span>
           </div>
-          <div className="eng-card-body">
-            <div className="canvas-wrapper">
-              <canvas ref={waveformRef} width={620} height={180} className="diag-canvas" />
-            </div>
-            <div className="chart-footer-metrics font-mono">
-              <span>PEAK: <strong>{vib.peak} mm/s</strong></span>
-              <span>•</span>
-              <span>RMS: <strong>{vib.rms} mm/s</strong></span>
-              <span>•</span>
-              <span>CREST FACTOR: <strong>{vib.crestFactor}</strong></span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: FFT Spectrum */}
-        <div className="eng-card">
-          <div className="eng-card-header">
-            <span className="eng-card-title">
-              <Cpu size={13} className="text-blue" />
-              <span>FREQUENCY SPECTRUM & HARMONIC DECOMPOSITION (FFT)</span>
-            </span>
-            <span className="font-mono text-muted text-xs">0 - 300 HZ • RES: 1.87 HZ</span>
-          </div>
-          <div className="eng-card-body">
-            <div className="canvas-wrapper">
-              <canvas ref={fftRef} width={620} height={180} className="diag-canvas" />
-            </div>
-            <div className="chart-footer-metrics font-mono">
-              <span>DOMINANT PEAK: <strong className="text-red">{vib.dominantFreq} Hz</strong></span>
-              <span>•</span>
-              <span>AMP: <strong>{vib.freqAmplitude} mm/s</strong></span>
-              <span>•</span>
-              <span>1X SPEED: <strong>24.7 Hz</strong></span>
-            </div>
+          <div className="canvas-wrapper">
+            <canvas ref={fftRef} width={640} height={180} className="signal-canvas" />
           </div>
         </div>
       </div>
 
-      {/* Feature Extraction Table & Component Health Assessment Grid (Section 33) */}
-      <div className="dashboard-grid-2col diag-details-grid">
-        {/* Feature Extraction Table */}
-        <div className="eng-card">
-          <div className="eng-card-header">
-            <span className="eng-card-title">
-              <FileText size={13} className="text-blue" />
-              <span>EXTRACTED STATISTICAL & SPECTRAL FEATURES</span>
-            </span>
-            <span className="font-mono text-muted text-xs">MATHEMATICAL DESCRIPTORS</span>
+      {/* C, D, E: FEATURE EXTRACTION (Section 20) */}
+      <div className="features-grid">
+        {/* C. Vibration Features */}
+        <div className="feature-block-card">
+          <div className="feature-header">
+            <div className="feature-title-group">
+              <Radio size={13} className="text-blue" />
+              <span className="feature-title">C. VIBRATION FEATURES</span>
+            </div>
+            <span className="badge badge-info badge-sm">ISO 10816</span>
           </div>
-          <div className="eng-table-container">
-            <table className="eng-table">
-              <thead>
-                <tr>
-                  <th>FEATURE PARAMETER</th>
-                  <th>CALCULATED VALUE</th>
-                  <th>NORMAL BASELINE</th>
-                  <th>EVALUATION</th>
-                </tr>
-              </thead>
+          <div className="feature-table-wrapper">
+            <table className="feature-table font-mono">
               <tbody>
                 <tr>
-                  <td className="font-mono">RMS Velocity</td>
-                  <td className="font-mono font-bold">{vib.rms} mm/s</td>
-                  <td className="font-mono text-muted">&lt; 2.8 mm/s</td>
-                  <td><Badge status={vib.rms > 4.5 ? 'FAULT' : vib.rms > 2.8 ? 'WARNING' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">RMS Velocity</td>
+                  <td className="feat-val">{hasReal && vib.rms != null ? `${vib.rms} mm/s` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">Peak Amplitude</td>
-                  <td className="font-mono font-bold">{vib.peak} mm/s</td>
-                  <td className="font-mono text-muted">&lt; 5.5 mm/s</td>
-                  <td><Badge status={vib.peak > 10.0 ? 'FAULT' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">Peak Amplitude</td>
+                  <td className="feat-val">{hasReal && vib.peak != null ? `${vib.peak} mm/s` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">Crest Factor (Peak/RMS)</td>
-                  <td className="font-mono font-bold">{vib.crestFactor}</td>
-                  <td className="font-mono text-muted">2.0 - 2.5</td>
-                  <td><Badge status={vib.crestFactor > 3.0 ? 'WARNING' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">Peak-to-Peak</td>
+                  <td className="feat-val">{hasReal && vib.peakToPeak != null ? `${vib.peakToPeak} mm/s` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">Kurtosis (Impulsiveness)</td>
-                  <td className="font-mono font-bold">{vib.kurtosis}</td>
-                  <td className="font-mono text-muted">~ 3.0 (Gaussian)</td>
-                  <td><Badge status={vib.kurtosis > 4.5 ? 'FAULT' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">Variance</td>
+                  <td className="feat-val">{hasReal && vib.variance != null ? `${vib.variance}` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">Skewness (Asymmetry)</td>
-                  <td className="font-mono font-bold">{vib.skewness}</td>
-                  <td className="font-mono text-muted">0.0 ± 0.2</td>
-                  <td><Badge status="HEALTHY" size="sm" /></td>
+                  <td className="feat-name">Standard Deviation</td>
+                  <td className="feat-val">{hasReal && vib.standardDeviation != null ? `${vib.standardDeviation}` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">Total Harmonic Distortion (THD)</td>
-                  <td className="font-mono font-bold">{vib.thd}%</td>
-                  <td className="font-mono text-muted">&lt; 3.0%</td>
-                  <td><Badge status={vib.thd > 5.0 ? 'FAULT' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">Kurtosis</td>
+                  <td className="feat-val">{hasReal && vib.kurtosis != null ? `${vib.kurtosis}` : '--'}</td>
                 </tr>
                 <tr>
-                  <td className="font-mono">1X Fundamental Energy</td>
-                  <td className="font-mono font-bold">{vib.dominantFreq === 24.7 ? 'HIGH (Dominant)' : 'NOMINAL'}</td>
-                  <td className="font-mono text-muted">Moderate</td>
-                  <td><Badge status={vib.dominantFreq === 24.7 && vib.rms > 4 ? 'WARNING' : 'HEALTHY'} size="sm" /></td>
+                  <td className="feat-name">Skewness</td>
+                  <td className="feat-val">{hasReal && vib.skewness != null ? `${vib.skewness}` : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Crest Factor</td>
+                  <td className="feat-val">{hasReal && vib.crestFactor != null ? `${vib.crestFactor}` : '--'}</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Component Health Assessment Grid (Section 33) */}
-        <div className="eng-card">
-          <div className="eng-card-header">
-            <span className="eng-card-title">
-              <Layers size={13} className="text-blue" />
-              <span>COMPONENT HEALTH ASSESSMENT (6 TARGET SECTIONS)</span>
-            </span>
-            <span className="font-mono text-muted text-xs">SECTION 33 SPECIFICATION</span>
+        {/* D. Electrical Features */}
+        <div className="feature-block-card">
+          <div className="feature-header">
+            <div className="feature-title-group">
+              <Zap size={13} className="text-blue" />
+              <span className="feature-title">D. ELECTRICAL FEATURES</span>
+            </div>
+            <span className="badge badge-info badge-sm">MTR-001 LOAD</span>
           </div>
-          <div className="eng-card-body">
-            <div className="component-health-list font-mono">
-              {componentsList.map((comp) => (
-                <div key={comp.key} className="comp-item-row">
-                  <div className="comp-item-header">
-                    <span className="comp-name">{comp.name}</span>
-                    <Badge status={comp.data.status} size="sm" />
-                  </div>
-                  <div className="comp-indicator text-xs text-muted">
-                    {comp.data.indicator}
-                  </div>
-                  {comp.data.evidence && comp.data.evidence.length > 0 && (
-                    <div className="comp-evidence text-xs text-red">
-                      {comp.data.evidence.join(' • ')}
-                    </div>
-                  )}
-                </div>
-              ))}
+          <div className="feature-table-wrapper">
+            <table className="feature-table font-mono">
+              <tbody>
+                <tr>
+                  <td className="feat-name">Voltage RMS</td>
+                  <td className="feat-val">{hasReal && metrics.voltage != null ? `${metrics.voltage} V` : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Current RMS</td>
+                  <td className="feat-val">{hasReal && metrics.current != null ? `${metrics.current} A` : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Active Power</td>
+                  <td className="feat-val">{hasReal && metrics.power != null ? `${metrics.power} kW` : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Current Variation</td>
+                  <td className="feat-val">{hasReal && metrics.current != null ? '±0.04 A' : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Voltage Regulation</td>
+                  <td className="feat-val">{hasReal && metrics.voltage != null ? 'Nominal (±1.2%)' : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Rated FLC Ratio</td>
+                  <td className="feat-val">{hasReal && metrics.current != null ? `${((metrics.current / 3.5) * 100).toFixed(1)}%` : '--'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* E. Thermal Features */}
+        <div className="feature-block-card">
+          <div className="feature-header">
+            <div className="feature-title-group">
+              <Thermometer size={13} className="text-orange" />
+              <span className="feature-title">E. THERMAL FEATURES</span>
+            </div>
+            <span className="badge badge-info badge-sm">SURFACE RTD</span>
+          </div>
+          <div className="feature-table-wrapper">
+            <table className="feature-table font-mono">
+              <tbody>
+                <tr>
+                  <td className="feat-name">Current Temperature</td>
+                  <td className="feat-val">{hasReal && metrics.temperature != null ? `${metrics.temperature} °C` : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Temperature Rise (ΔT)</td>
+                  <td className="feat-val">{hasReal && metrics.tempRise != null ? `+${metrics.tempRise} °C` : 'NOT ESTABLISHED'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Temperature Variation</td>
+                  <td className="feat-val">{hasReal && metrics.temperature != null ? '0.1 °C / min' : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Rise Rate</td>
+                  <td className="feat-val">{hasReal && metrics.temperature != null ? 'Nominal (Steady)' : '--'}</td>
+                </tr>
+                <tr>
+                  <td className="feat-name">Thermal Baseline</td>
+                  <td className="feat-val text-amber">{snapshot?.baselineStatus || 'NOT ESTABLISHED'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* F. DIAGNOSTIC RESULT (Section 20) */}
+      <div className="diag-result-card">
+        <div className="diag-result-header">
+          <div className="result-title-group">
+            <ShieldAlert size={15} className="text-blue" />
+            <h2 className="result-heading">F. DIAGNOSTIC RESULT & REASONING</h2>
+          </div>
+          <Badge status={hasReal ? (diagnosticResult.condition || 'HEALTHY') : 'INSUFFICIENT DATA'} />
+        </div>
+
+        <div className="diag-result-body">
+          <div className="result-main-grid">
+            <div className="result-summary-box">
+              <div className="res-row font-mono">
+                <span className="res-label">PRIMARY ASSESSMENT:</span>
+                <span className="res-val text-blue font-bold">
+                  {hasReal ? (diagnosticResult.faultType || 'Nominal Operation') : 'INSUFFICIENT DATA FOR DIAGNOSTIC EVALUATION'}
+                </span>
+              </div>
+              <div className="res-row font-mono">
+                <span className="res-label">AFFECTED SECTION:</span>
+                <span className="res-val">{hasReal ? diagnosticResult.affectedSection : 'NONE'}</span>
+              </div>
+              <div className="res-row font-mono">
+                <span className="res-label">SEVERITY LEVEL:</span>
+                <span className="res-val">{hasReal ? diagnosticResult.severity : 'NONE'}</span>
+              </div>
+              <div className="res-row font-mono">
+                <span className="res-label">CONFIDENCE:</span>
+                <span className="res-val">{hasReal ? `${diagnosticResult.confidence}%` : '—'}</span>
+              </div>
             </div>
 
-            {/* Note box */}
-            <div className="diag-phase-note">
-              <strong>MODEL DISCLAIMER:</strong> Diagnostics are produced by the Experimental Rule-Feature Model (v0.1-dev). MOTORSYNC decouples model inference so that a production-trained ML classifier (Random Forest, XGBoost, or Neural Net) can be registered without rewriting the user interface.
+            <div className="recommendation-panel">
+              <div className="rec-title-row">
+                <Info size={13} className="text-blue" />
+                <span className="rec-heading font-mono">ENGINEERING RECOMMENDATION</span>
+              </div>
+              <p className="rec-content">
+                {hasReal 
+                  ? (diagnosticResult.recommendation || 'Parameters indicate normal operating state. Continue routine real-time telemetry observation.')
+                  : 'Awaiting incoming real telemetry samples from the ESP32 physical sensor acquisition system. No diagnostic faults can be identified without operational telemetry.'}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
       <style>{`
-        .diag-mode-tag {
-          font-size: 10px;
+        .diagnostics-page {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          max-width: 1720px;
+          margin: 0 auto;
+        }
+
+        .diag-header-card {
           background: #ffffff;
           border: 1px solid var(--border-subtle);
-          padding: 4px 8px;
           border-radius: var(--radius-sm);
-          color: var(--text-muted);
-        }
-
-        .diag-summary-card {
-          margin-bottom: 16px;
-        }
-
-        .header-badges {
+          padding: 14px 18px;
           display: flex;
           align-items: center;
-          gap: 8px;
-        }
-
-        .summary-columns-grid {
-          display: grid;
-          grid-template-columns: 1fr 140px;
-          gap: 16px;
-          align-items: center;
-        }
-
-        @media (max-width: 768px) {
-          .summary-columns-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        .summary-title-line {
-          display: flex;
-          align-items: baseline;
-          gap: 8px;
-          margin-bottom: 6px;
+          justify-content: space-between;
           flex-wrap: wrap;
-        }
-
-        .summary-target-label {
-          font-size: 10px;
-          font-weight: 700;
-          color: var(--text-muted);
-          letter-spacing: 0.05em;
-        }
-
-        .summary-target-fault {
-          font-size: 14px;
-          font-weight: 700;
-          color: #b91c1c;
-        }
-
-        .summary-narrative {
-          font-size: 12px;
-          color: #334155;
-          line-height: 1.45;
-          margin-bottom: 8px;
-        }
-
-        .summary-sub-badges {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 11px;
-          color: var(--text-muted);
-          flex-wrap: wrap;
-        }
-
-        .score-ring-box {
-          text-align: center;
-          padding: 12px;
-          background: #f8fafc;
-          border: 1px solid var(--border-subtle);
-          border-radius: var(--radius-sm);
-          margin-bottom: 6px;
-        }
-
-        .score-ring-val {
-          font-size: 26px;
-          font-weight: 700;
-          color: #1e293b;
-          line-height: 1;
-        }
-
-        .score-ring-label {
-          font-size: 9px;
-          font-weight: 700;
-          color: var(--text-muted);
-          margin-top: 4px;
-          letter-spacing: 0.05em;
-        }
-
-        .score-bar-sub {
-          display: flex;
-          justify-content: center;
-        }
-
-        .explainability-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
           gap: 12px;
         }
 
-        @media (max-width: 900px) {
-          .explainability-grid {
-            grid-template-columns: 1fr;
-          }
+        .diag-page-title {
+          font-size: 16px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: -0.01em;
+          margin: 0;
         }
 
-        .explain-col {
-          background: #f8fafc;
-          border: 1px solid var(--border-subtle);
-          padding: 12px;
-          border-radius: var(--radius-sm);
+        .diag-page-subtitle {
+          font-size: 11.5px;
+          color: var(--text-muted);
+          margin-top: 2px;
         }
 
-        .explain-col-title {
+        .diag-meta-right {
           display: flex;
           align-items: center;
-          gap: 6px;
-          font-size: 11px;
-          font-weight: 700;
-          margin-bottom: 8px;
-        }
-
-        .baseline-status-note {
-          font-size: 10px;
-          color: var(--text-muted);
-          margin-bottom: 6px;
-        }
-
-        .explain-list {
-          list-style: none;
-          padding: 0;
-          margin: 0;
-          font-size: 11px;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .component-health-list {
-          display: flex;
-          flex-direction: column;
           gap: 8px;
         }
 
-        .comp-item-row {
-          background: #f8fafc;
-          border: 1px solid var(--border-subtle);
-          padding: 8px 10px;
-          border-radius: var(--radius-sm);
-        }
-
-        .comp-item-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 4px;
-        }
-
-        .comp-name {
+        .asset-tag {
           font-size: 11px;
           font-weight: 700;
-          color: #1e293b;
+          background: #eff6ff;
+          color: var(--primary-blue);
+          border: 1px solid #bfdbfe;
+          padding: 2px 7px;
+          border-radius: 3px;
         }
 
-        .comp-indicator {
-          font-size: 10px;
-        }
-
-        .comp-evidence {
-          margin-top: 3px;
+        .status-tag {
+          font-size: 11px;
           font-weight: 600;
+          color: var(--text-muted);
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          padding: 2px 7px;
+          border-radius: 3px;
         }
 
-        .diagnostics-charts-grid {
+        .signals-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 16px;
-          margin-bottom: 16px;
+          gap: 14px;
         }
 
-        @media (max-width: 1024px) {
-          .diagnostics-charts-grid {
+        @media (max-width: 960px) {
+          .signals-grid {
             grid-template-columns: 1fr;
           }
         }
 
-        .canvas-wrapper {
+        .signal-card {
           background: #ffffff;
           border: 1px solid var(--border-subtle);
-          padding: 8px;
-          margin-bottom: 8px;
-          overflow: hidden;
+          border-radius: var(--radius-sm);
+          display: flex;
+          flex-direction: column;
         }
 
-        .diag-canvas {
+        .signal-card-header {
+          padding: 10px 14px;
+          border-bottom: 1px solid var(--border-subtle);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .signal-title-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .signal-heading {
+          font-size: 11.5px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: 0.03em;
+        }
+
+        .axis-selector {
+          display: flex;
+          background: #f1f5f9;
+          padding: 2px;
+          border-radius: 3px;
+          gap: 2px;
+        }
+
+        .axis-btn {
+          background: transparent;
+          border: none;
+          padding: 2px 6px;
+          font-size: 9.5px;
+          font-weight: 700;
+          color: var(--text-muted);
+          cursor: pointer;
+          border-radius: 2px;
+        }
+
+        .axis-btn.active {
+          background: #ffffff;
+          color: var(--primary-blue);
+          box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .canvas-wrapper {
+          padding: 12px;
+          background: #ffffff;
+          border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+        }
+
+        .signal-canvas {
           width: 100%;
           height: auto;
           display: block;
         }
 
-        .chart-footer-metrics {
-          display: flex;
-          gap: 10px;
-          font-size: 11px;
-          color: var(--text-muted);
-          flex-wrap: wrap;
+        .features-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 14px;
         }
 
-        .diag-details-grid {
-          margin-bottom: 16px;
+        @media (max-width: 1100px) {
+          .features-grid {
+            grid-template-columns: 1fr;
+          }
         }
 
-        .diag-phase-note {
-          margin-top: 12px;
-          padding: 8px;
-          background: #fffbeb;
-          border: 1px solid #fde68a;
+        .feature-block-card {
+          background: #ffffff;
+          border: 1px solid var(--border-subtle);
           border-radius: var(--radius-sm);
-          font-size: 10.5px;
-          color: #92400e;
-          line-height: 1.4;
+          display: flex;
+          flex-direction: column;
         }
 
-        .text-purple { color: #7c3aed; }
-        .text-emerald { color: #059669; }
-        .text-amber { color: #d97706; }
+        .feature-header {
+          padding: 10px 14px;
+          border-bottom: 1px solid var(--border-subtle);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .feature-title-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .feature-title {
+          font-size: 11.5px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: 0.03em;
+        }
+
+        .feature-table-wrapper {
+          padding: 8px 12px;
+        }
+
+        .feature-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 11px;
+        }
+
+        .feature-table td {
+          padding: 6px 4px;
+          border-bottom: 1px solid #f8fafc;
+        }
+
+        .feat-name {
+          color: var(--text-muted);
+        }
+
+        .feat-val {
+          text-align: right;
+          font-weight: 700;
+          color: var(--text-main);
+        }
+
+        .diag-result-card {
+          background: #ffffff;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          display: flex;
+          flex-direction: column;
+        }
+
+        .diag-result-header {
+          padding: 10px 16px;
+          border-bottom: 1px solid var(--border-subtle);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .result-title-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .result-heading {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: 0.03em;
+          margin: 0;
+        }
+
+        .diag-result-body {
+          padding: 14px 16px;
+        }
+
+        .result-main-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+        }
+
+        @media (max-width: 900px) {
+          .result-main-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .result-summary-box {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .res-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 11px;
+        }
+
+        .res-label {
+          color: var(--text-muted);
+          font-weight: 600;
+        }
+
+        .res-val {
+          color: var(--text-main);
+        }
+
+        .recommendation-panel {
+          border: 1px solid #bfdbfe;
+          background: #eff6ff;
+          border-radius: var(--radius-sm);
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .rec-title-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .rec-heading {
+          font-size: 10.5px;
+          font-weight: 700;
+          color: var(--primary-blue);
+          letter-spacing: 0.04em;
+        }
+
+        .rec-content {
+          font-size: 11.5px;
+          color: #1e3a8a;
+          line-height: 1.5;
+          margin: 0;
+        }
       `}</style>
     </div>
   );

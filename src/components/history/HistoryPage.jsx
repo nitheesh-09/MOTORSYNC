@@ -2,218 +2,238 @@ import React, { useState, useEffect } from 'react';
 import { 
   History as HistoryIcon, 
   Search, 
-  Filter, 
   Download, 
   Eye, 
-  CheckCircle2, 
-  AlertTriangle, 
+  RefreshCw,
+  Cpu,
   Calendar,
-  Layers,
-  Cpu
+  Layers
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
 import { RecordDetailModal } from './RecordDetailModal';
-import { MOTOR_REGISTRY, getMotorById } from '../../services/motorRegistry';
+import { apiClient } from '../../services/apiClient';
 import { fileAnalysisService } from '../../services/fileAnalysisService';
 
-import { apiClient } from '../../services/apiClient';
-
-export const HistoryPage = ({ snapshot }) => {
+export const HistoryPage = () => {
   const [selectedRecord, setSelectedRecord] = useState(null);
-  const [filterMotor, setFilterMotor] = useState('MTR-001');
-  const [filterMode, setFilterMode] = useState('ESP32');
+  const [filterSource, setFilterSource] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterDate, setFilterDate] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [savedOfflineLogs, setSavedOfflineLogs] = useState([]);
-  const [realEsp32Logs, setRealEsp32Logs] = useState([]);
+  const [historyRecords, setHistoryRecords] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch real history
+  const fetchHistory = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch real ESP32 telemetry history from backend database
+      const raw = await apiClient.getRawTelemetryHistory('MTR-001', { limit: 200 }).catch(() => []);
+      
+      const mappedRaw = Array.isArray(raw) ? raw.map((r, idx) => {
+        const d = new Date(r.timestamp);
+        const vx = r.vibrationX != null ? r.vibrationX : null;
+        const vy = r.vibrationY != null ? r.vibrationY : null;
+        const vz = r.vibrationZ != null ? r.vibrationZ : null;
+        const mag = r.vibrationMagnitude != null ? r.vibrationMagnitude : (
+          vx != null && vy != null && vz != null
+            ? parseFloat(Math.sqrt(vx * vx + vy * vy + vz * vz).toFixed(3))
+            : null
+        );
+
+        return {
+          recordId: `ESP32-REC-${r.id || (1000 + idx)}`,
+          timestamp: d.toLocaleString(),
+          rawDate: d.toISOString().split('T')[0],
+          date: d.toLocaleDateString(),
+          time: d.toLocaleTimeString(),
+          motorId: r.motorId || 'MTR-001',
+          motor: 'Motor MTR-001',
+          voltage: r.voltage != null ? `${r.voltage} V` : '--',
+          current: r.current != null ? `${r.current} A` : '--',
+          temperature: r.temperature != null ? `${r.temperature} °C` : '--',
+          vibration: mag != null ? `${mag} mm/s` : '--',
+          vibrationMagnitude: mag,
+          vibrationX: vx,
+          vibrationY: vy,
+          vibrationZ: vz,
+          voltageVal: r.voltage,
+          currentVal: r.current,
+          tempVal: r.temperature,
+          sourceType: 'ESP32',
+          source: 'ESP32 Real Hardware [RAW STREAM]',
+          status: 'HEALTHY',
+          health: 95,
+          mode: 'LIVE MONITORING',
+          notes: `Real 3-Axis: X=${vx ?? '—'} mm/s, Y=${vy ?? '—'} mm/s, Z=${vz ?? '—'} mm/s`,
+          operator: 'ESP32 Hardware Stream',
+          rawRecord: r
+        };
+      }).reverse() : [];
+
+      // 2. Fetch offline analyzed files (if any were uploaded)
+      const offline = fileAnalysisService.getSavedRecords();
+      const mappedOffline = Array.isArray(offline) ? offline.map(s => {
+        const d = new Date(s.timestamp || s.date || Date.now());
+        return {
+          recordId: s.id,
+          timestamp: d.toLocaleString(),
+          rawDate: d.toISOString().split('T')[0],
+          date: d.toLocaleDateString(),
+          time: d.toLocaleTimeString(),
+          motorId: s.motorId || 'MTR-001',
+          motor: 'Motor MTR-001',
+          voltage: s.analysisData?.voltageAnalysis?.rms != null ? `${s.analysisData.voltageAnalysis.rms} V` : '--',
+          current: s.analysisData?.currentAnalysis?.rms != null ? `${s.analysisData.currentAnalysis.rms} A` : '--',
+          temperature: s.analysisData?.temperatureAnalysis?.mean != null ? `${s.analysisData.temperatureAnalysis.mean} °C` : '--',
+          vibration: s.analysisData?.vibrationFeatures?.rms != null ? `${s.analysisData.vibrationFeatures.rms} mm/s` : '--',
+          vibrationMagnitude: s.analysisData?.vibrationFeatures?.rms,
+          sourceType: 'OFFLINE_FILE',
+          source: s.fileName || 'offline_dataset.csv',
+          status: s.status === 'ANALYZED' ? 'HEALTHY' : 'WARNING',
+          health: 88,
+          mode: 'OFFLINE ANALYSIS',
+          notes: `Offline dataset processed (${s.samples || 0} samples)`,
+          operator: 'Offline File Ingestion',
+          analysisData: s.analysisData
+        };
+      }) : [];
+
+      setHistoryRecords([...mappedRaw, ...mappedOffline]);
+    } catch (e) {
+      console.warn('History fetch notice:', e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // 1. Load saved offline datasets
-    try {
-      const saved = fileAnalysisService.getSavedRecords();
-      const mappedSaved = saved.map(s => ({
-        recordId: s.id,
-        motorId: s.motorId || 'MTR-001',
-        motor: getMotorById(s.motorId)?.name || 'Industrial Motor',
-        mode: 'OFFLINE ANALYSIS',
-        sourceType: 'OFFLINE_FILE',
-        source: s.fileName || 'offline_dataset.csv',
-        date: s.date,
-        time: s.time,
-        status: s.status === 'ANALYZED' ? 'HEALTHY' : 'WARNING',
-        health: 88,
-        notes: s.referenceDatasetLabel && s.referenceDatasetLabel !== 'None' 
-          ? `Ref Label: ${s.referenceDatasetLabel}` 
-          : `Offline dataset processed (${s.samples ? s.samples.toLocaleString() : 0} samples)`,
-        vibrationRms: s.analysisData?.vibrationFeatures?.rms || 2.18,
-        vibrationPeak: s.analysisData?.vibrationFeatures?.peak || 4.62,
-        crestFactor: s.analysisData?.vibrationFeatures?.crestFactor || 2.12,
-        kurtosis: s.analysisData?.vibrationFeatures?.kurtosis || 3.14,
-        currentRms: s.analysisData?.currentAnalysis?.rms || 2.18,
-        voltageRms: s.analysisData?.voltageAnalysis?.rms || 230.4,
-        power: s.analysisData?.electricalFeatures?.power || 1.25,
-        temp: s.analysisData?.temperatureAnalysis?.mean || 42.6,
-        tempRise: s.analysisData?.thermalFeatures?.temperatureRiseFromBaseline || 4.6,
-        estimatedRpm: s.analysisData?.estimatedRPM?.estimatedRPM || 1500,
-        referenceDatasetLabel: s.referenceDatasetLabel,
-        operator: 'Offline Ingestion Service',
-        analysisData: s.analysisData
-      }));
-      setSavedOfflineLogs(mappedSaved);
-    } catch (e) {
-      console.warn('Failed loading saved offline records:', e);
-    }
-
-    // 2. Fetch real ESP32 hardware history from backend (Task 9)
-    const fetchRealHardwareHistory = async () => {
-      try {
-        const rawHistory = await apiClient.getRawTelemetryHistory('MTR-001', { limit: 100 });
-        if (Array.isArray(rawHistory) && rawHistory.length > 0) {
-          const mappedEsp = rawHistory.map((r, idx) => {
-            const d = new Date(r.timestamp);
-            const vx = r.vibrationX != null ? r.vibrationX : null;
-            const vy = r.vibrationY != null ? r.vibrationY : null;
-            const vz = r.vibrationZ != null ? r.vibrationZ : null;
-            const mag = r.vibrationMagnitude != null ? r.vibrationMagnitude : (
-              vx != null && vy != null && vz != null
-                ? parseFloat(Math.sqrt(vx*vx + vy*vy + vz*vz).toFixed(4))
-                : null
-            );
-            
-            const powerVal = (r.voltage != null && r.current != null)
-              ? parseFloat(((r.voltage * r.current * Math.sqrt(3) * 0.85) / 1000).toFixed(3))
-              : null;
-            
-            return {
-              recordId: `ESP32-REC-${r.id || (1000 + idx)}`,
-              motorId: r.motorId || 'MTR-001',
-              motor: getMotorById(r.motorId)?.name || 'Motor MTR-001',
-              mode: 'LIVE MONITORING',
-              sourceType: 'ESP32',
-              source: 'ESP32 Real Hardware [RAW STREAM]',
-              date: d.toLocaleDateString(),
-              time: d.toLocaleTimeString(),
-              status: 'HEALTHY',
-              health: 94,
-              notes: `Real 3-Axis: X=${vx ?? '—'} mm/s, Y=${vy ?? '—'} mm/s, Z=${vz ?? '—'} mm/s • Mag=${mag ?? '—'} mm/s`,
-              vibrationRms: mag,
-              vibrationPeak: mag,
-              crestFactor: null,
-              kurtosis: null,
-              currentRms: r.current != null ? r.current : null,
-              voltageRms: r.voltage != null ? r.voltage : null,
-              power: powerVal,
-              temp: r.temperature != null ? r.temperature : null,
-              tempRise: null,
-              estimatedRpm: null,
-              operator: 'ESP32 Hardware Stream',
-              rawRecord: r
-            };
-          }).reverse(); // Most recent first
-          setRealEsp32Logs(mappedEsp);
-        }
-      } catch (err) {
-        console.warn('Could not fetch real ESP32 history:', err.message);
-      }
-    };
-
-    fetchRealHardwareHistory();
+    fetchHistory();
   }, []);
 
-  // Combine real ESP32 records and offline uploaded datasets (No synthetic data mixed in - Task 4, 9, 10)
-  const allRecords = [...realEsp32Logs, ...savedOfflineLogs];
-
-  // Filtering logic supporting Motor ID, Operating Mode, Status, and Date
-  const filtered = allRecords.filter((r) => {
-    if (filterMotor !== 'ALL' && r.motorId !== filterMotor) return false;
-    if (filterMode !== 'ALL' && r.sourceType !== filterMode && r.mode !== filterMode) return false;
+  // Filter records
+  const filtered = historyRecords.filter((r) => {
+    if (filterSource !== 'ALL' && r.sourceType !== filterSource) return false;
     if (filterStatus !== 'ALL' && r.status !== filterStatus) return false;
-    if (filterDate !== 'ALL' && r.date !== filterDate) return false;
+    if (filterDate !== 'ALL' && r.rawDate !== filterDate) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
         r.recordId.toLowerCase().includes(q) ||
         r.motorId.toLowerCase().includes(q) ||
-        r.motor.toLowerCase().includes(q) ||
-        r.mode.toLowerCase().includes(q) ||
         r.source.toLowerCase().includes(q) ||
-        r.notes.toLowerCase().includes(q) ||
-        r.operator.toLowerCase().includes(q)
+        r.notes.toLowerCase().includes(q)
       );
     }
     return true;
   });
 
+  // Unique dynamic dates for filter dropdown
+  const uniqueDates = Array.from(new Set(historyRecords.map(r => r.rawDate).filter(Boolean)));
+
+  // Real CSV Export
+  const handleExportCSV = () => {
+    if (filtered.length === 0) return;
+    const headers = ['Timestamp', 'MotorID', 'Voltage', 'Current', 'Temperature', 'Vibration', 'SourceType', 'Status'];
+    const rows = filtered.map(r => [
+      `"${r.timestamp}"`,
+      `"${r.motorId}"`,
+      `"${r.voltage}"`,
+      `"${r.current}"`,
+      `"${r.temperature}"`,
+      `"${r.vibration}"`,
+      `"${r.sourceType}"`,
+      `"${r.status}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `motorsync_history_MTR-001_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="history-page">
-      {/* Title */}
-      <div className="page-header-block">
+      {/* Header */}
+      <div className="history-header-card">
         <div>
-          <h1 className="page-title">MOTOR TELEMETRY & ANALYSIS HISTORY</h1>
-          <div className="page-subtitle">Historical telemetry records for physical motor MTR-001 streamed from ESP32 Real Hardware.</div>
+          <h1 className="history-page-title">MOTOR TELEMETRY HISTORY</h1>
+          <div className="history-page-subtitle">
+            Historical operational telemetry records for real motor MTR-001
+          </div>
         </div>
-        <button 
-          className="eng-btn eng-btn-secondary eng-btn-sm font-mono"
-          onClick={() => alert('Exporting MTR-001 telemetry history as CSV...')}
-        >
-          <Download size={12} />
-          <span>EXPORT CSV</span>
-        </button>
+        <div className="header-actions-row">
+          <button 
+            className="eng-btn eng-btn-secondary eng-btn-sm font-mono"
+            onClick={fetchHistory}
+            disabled={loading}
+            title="Refresh history records from backend"
+          >
+            <RefreshCw size={12} className={loading ? 'spin-icon' : ''} />
+            <span>{loading ? 'REFRESHING...' : 'REFRESH'}</span>
+          </button>
+
+          <button 
+            className="eng-btn eng-btn-secondary eng-btn-sm font-mono"
+            onClick={handleExportCSV}
+            disabled={filtered.length === 0}
+            title="Export filtered records as CSV"
+          >
+            <Download size={12} />
+            <span>EXPORT CSV</span>
+          </button>
+        </div>
       </div>
 
-      {/* Filter Toolbar Card */}
-      <div className="eng-card filter-card">
-        <div className="filter-row">
-          {/* Search Box */}
-          <div className="filter-group flex-1">
-            <span className="filter-label">SEARCH RECORDS</span>
-            <div className="filter-search-box">
-              <Search size={12} className="filter-search-icon" />
-              <input
+      {/* Filter Row */}
+      <div className="history-filter-card">
+        <div className="filter-inner-grid">
+          {/* Search */}
+          <div className="filter-field flex-1">
+            <span className="filter-label">SEARCH</span>
+            <div className="search-wrap">
+              <Search size={12} className="search-icon" />
+              <input 
                 type="text"
-                placeholder="Search Record ID, source file, anomaly..."
+                placeholder="Search record ID or notes..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="eng-input font-mono w-full"
+                className="filter-input font-mono"
               />
             </div>
           </div>
 
-          {/* Motor ID Filter (Requirement 10) */}
-          <div className="filter-group">
-            <span className="filter-label">MOTOR ID</span>
-            <select 
-              className="eng-select font-mono"
-              value={filterMotor}
-              onChange={(e) => setFilterMotor(e.target.value)}
-            >
-              <option value="MTR-001">MTR-001 (Physical Testbed)</option>
-            </select>
+          {/* Motor ID (Locked to real motor MTR-001) */}
+          <div className="filter-field">
+            <span className="filter-label">MOTOR</span>
+            <div className="filter-static-pill font-mono">MTR-001</div>
           </div>
 
-          {/* Source Type Filter (Section 13) */}
-          <div className="filter-group">
-            <span className="filter-label">SOURCE TYPE</span>
+          {/* Source Type */}
+          <div className="filter-field">
+            <span className="filter-label">SOURCE</span>
             <select 
-              className="eng-select font-mono"
-              value={filterMode}
-              onChange={(e) => setFilterMode(e.target.value)}
+              value={filterSource} 
+              onChange={(e) => setFilterSource(e.target.value)}
+              className="filter-select font-mono"
             >
               <option value="ALL">ALL SOURCES</option>
               <option value="ESP32">ESP32 REAL HARDWARE</option>
-              <option value="OFFLINE_FILE">OFFLINE_FILE</option>
-              <option value="EXTERNAL_LAPTOP">EXTERNAL_LAPTOP</option>
+              <option value="OFFLINE_FILE">OFFLINE DATASET</option>
             </select>
           </div>
 
-          {/* Status Filter */}
-          <div className="filter-group">
+          {/* Status */}
+          <div className="filter-field">
             <span className="filter-label">STATUS</span>
             <select 
-              className="eng-select font-mono"
-              value={filterStatus}
+              value={filterStatus} 
               onChange={(e) => setFilterStatus(e.target.value)}
+              className="filter-select font-mono"
             >
               <option value="ALL">ALL STATUSES</option>
               <option value="HEALTHY">HEALTHY</option>
@@ -222,28 +242,27 @@ export const HistoryPage = ({ snapshot }) => {
             </select>
           </div>
 
-          {/* Date Filter */}
-          <div className="filter-group">
+          {/* Dynamic Date Filter */}
+          <div className="filter-field">
             <span className="filter-label">DATE</span>
             <select 
-              className="eng-select font-mono"
-              value={filterDate}
+              value={filterDate} 
               onChange={(e) => setFilterDate(e.target.value)}
+              className="filter-select font-mono"
             >
-              <option value="ALL">ALL RECORDINGS</option>
-              <option value="2026-09-30">Today (2026-09-30)</option>
-              <option value="2026-09-29">Yesterday (2026-09-29)</option>
-              <option value="2026-09-28">28 Sep 2026</option>
+              <option value="ALL">ALL DATES</option>
+              {uniqueDates.map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
             </select>
           </div>
 
-          {/* Reset Filters */}
-          <div className="filter-group-action">
+          {/* Clear Filters */}
+          <div className="filter-field filter-btn-col">
             <button 
               className="eng-btn eng-btn-secondary eng-btn-sm font-mono"
               onClick={() => {
-                setFilterMotor('ALL');
-                setFilterMode('ALL');
+                setFilterSource('ALL');
                 setFilterStatus('ALL');
                 setFilterDate('ALL');
                 setSearchQuery('');
@@ -255,69 +274,69 @@ export const HistoryPage = ({ snapshot }) => {
         </div>
       </div>
 
-      {/* Main Historical Table */}
-      <div className="eng-card history-table-card">
-        <div className="eng-card-header">
-          <span className="eng-card-title">
-            <HistoryIcon size={13} className="text-blue" />
-            <span>RECORDED HISTORICAL ARCHIVE ({filtered.length} ENTRIES)</span>
-          </span>
-          <span className="font-mono text-xs text-muted">DATA RETENTION: 90 DAYS LOCAL CACHE</span>
+      {/* History Table (Section 14) */}
+      <div className="history-table-card">
+        <div className="table-header-strip">
+          <div className="table-title-group">
+            <HistoryIcon size={14} className="text-blue" />
+            <span className="table-title">OPERATIONAL TELEMETRY LOGS ({filtered.length})</span>
+          </div>
+          <span className="font-mono text-xs text-muted">Click row for full telemetry breakdown</span>
         </div>
+
         <div className="eng-table-container">
-          <table className="eng-table font-mono history-table">
+          <table className="eng-table font-mono">
             <thead>
               <tr>
-                <th>DATE & TIME</th>
-                <th>MOTOR ID</th>
-                <th>MOTOR ASSET NAME</th>
-                <th>SOURCE TYPE</th>
-                <th>DATA SOURCE / FILE</th>
+                <th>TIMESTAMP</th>
+                <th>MOTOR</th>
+                <th>VOLTAGE</th>
+                <th>CURRENT</th>
+                <th>TEMPERATURE</th>
+                <th>VIBRATION</th>
+                <th>SOURCE</th>
                 <th>STATUS</th>
-                <th>HEALTH</th>
-                <th>VIB RMS</th>
-                <th>EST. RPM</th>
                 <th>ACTION</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="text-center text-muted font-mono" style={{ padding: '36px' }}>
-                    NO HISTORICAL RECORDS — WAITING FOR REAL MOTOR DATA FROM ESP32
+                  <td colSpan="9" className="empty-history-cell">
+                    <div className="empty-history-content">
+                      <div className="empty-title">NO TELEMETRY HISTORY</div>
+                      <div className="empty-subtitle">WAITING FOR REAL MOTOR DATA FROM ESP32</div>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 filtered.map((r) => (
-                  <tr key={r.recordId} className="history-row">
-                    <td className="text-muted font-mono">{r.date} {r.time}</td>
-                    <td className="font-bold text-blue font-mono">{r.motorId}</td>
+                  <tr 
+                    key={r.recordId} 
+                    className="clickable-row"
+                    onClick={() => setSelectedRecord(r)}
+                  >
+                    <td className="text-muted">{r.timestamp}</td>
+                    <td className="font-bold text-blue">{r.motorId}</td>
+                    <td>{r.voltage}</td>
+                    <td>{r.current}</td>
+                    <td>{r.temperature}</td>
+                    <td className="font-bold">{r.vibration}</td>
                     <td>
-                      <div className="font-sans font-bold">{r.motor}</div>
-                      <div className="text-xs text-muted font-mono">ID: {r.recordId}</div>
-                    </td>
-                    <td>
-                      <span className={`badge ${
-                        r.sourceType === 'ESP32'
-                          ? 'badge-healthy'
-                          : r.sourceType === 'EXTERNAL_LAPTOP' 
-                          ? 'badge-healthy' 
-                          : r.sourceType === 'OFFLINE_FILE'
-                          ? 'badge-info'
-                          : 'badge-muted'
-                      } badge-sm font-mono`}>
-                        {r.sourceType || 'ESP32'}
+                      <span className={`badge ${r.sourceType === 'ESP32' ? 'badge-healthy' : 'badge-info'} badge-sm`}>
+                        {r.sourceType}
                       </span>
                     </td>
-                    <td className="text-xs">{r.source}</td>
-                    <td><Badge status={r.status} size="sm" /></td>
-                    <td className="font-bold">{r.health} / 100</td>
-                    <td>{r.vibrationRms} mm/s</td>
-                    <td className="text-amber">{r.estimatedRpm} RPM</td>
+                    <td>
+                      <Badge status={r.status} size="sm" />
+                    </td>
                     <td>
                       <button 
-                        className="eng-btn eng-btn-secondary eng-btn-sm font-mono"
-                        onClick={() => setSelectedRecord(r)}
+                        className="eng-btn eng-btn-secondary eng-btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedRecord(r);
+                        }}
                       >
                         <Eye size={11} />
                         <span>Inspect</span>
@@ -331,68 +350,201 @@ export const HistoryPage = ({ snapshot }) => {
         </div>
       </div>
 
-      {/* Record Inspection Modal */}
+      {/* Record Detail Modal */}
       {selectedRecord && (
-        <RecordDetailModal
-          record={selectedRecord}
-          onClose={() => setSelectedRecord(null)}
+        <RecordDetailModal 
+          record={selectedRecord} 
+          onClose={() => setSelectedRecord(null)} 
         />
       )}
 
       <style>{`
-        .filter-card {
-          margin-bottom: 14px;
-          padding: 10px 14px;
+        .history-page {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          max-width: 1720px;
+          margin: 0 auto;
         }
 
-        .filter-row {
+        .history-header-card {
+          background: #ffffff;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          padding: 14px 18px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 12px;
+        }
+
+        .history-page-title {
+          font-size: 16px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: -0.01em;
+          margin: 0;
+        }
+
+        .history-page-subtitle {
+          font-size: 11.5px;
+          color: var(--text-muted);
+          margin-top: 2px;
+        }
+
+        .header-actions-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .history-filter-card {
+          background: #ffffff;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          padding: 12px 16px;
+        }
+
+        .filter-inner-grid {
           display: flex;
           align-items: flex-end;
           gap: 12px;
           flex-wrap: wrap;
         }
 
-        .filter-group {
+        .filter-field {
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
 
-        .filter-group.flex-1 {
-          flex: 1;
-          min-width: 220px;
-        }
-
         .filter-label {
-          font-size: 8.5px;
+          font-size: 9.5px;
           font-weight: 700;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
           color: var(--text-muted);
+          letter-spacing: 0.04em;
         }
 
-        .filter-search-box {
+        .search-wrap {
           position: relative;
           display: flex;
           align-items: center;
+          min-width: 240px;
         }
 
-        .filter-search-icon {
+        .search-icon {
           position: absolute;
           left: 8px;
           color: var(--text-muted);
         }
 
-        .filter-search-box input {
-          padding-left: 26px;
+        .filter-input {
+          width: 100%;
+          padding: 4px 10px 4px 26px;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          font-size: 11.5px;
+          outline: none;
         }
 
-        .filter-group-action {
-          margin-bottom: 1px;
+        .filter-input:focus {
+          border-color: var(--border-focus);
         }
 
-        .history-row:hover {
-          background-color: var(--bg-hover) !important;
+        .filter-static-pill {
+          padding: 4px 10px;
+          background: #f8fafc;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--primary-blue);
+        }
+
+        .filter-select {
+          padding: 4px 8px;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          font-size: 11px;
+          background: #ffffff;
+          outline: none;
+        }
+
+        .filter-btn-col {
+          justify-content: flex-end;
+        }
+
+        .history-table-card {
+          background: #ffffff;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-sm);
+          display: flex;
+          flex-direction: column;
+        }
+
+        .table-header-strip {
+          padding: 10px 16px;
+          border-bottom: 1px solid var(--border-subtle);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .table-title-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .table-title {
+          font-size: 11.5px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: 0.03em;
+        }
+
+        .clickable-row {
+          cursor: pointer;
+          transition: background 0.1s ease;
+        }
+
+        .clickable-row:hover {
+          background: #f8fafc;
+        }
+
+        .empty-history-cell {
+          text-align: center;
+          padding: 48px 16px !important;
+        }
+
+        .empty-history-content {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          align-items: center;
+        }
+
+        .empty-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text-main);
+          letter-spacing: 0.04em;
+        }
+
+        .empty-subtitle {
+          font-size: 11px;
+          color: var(--text-muted);
+          letter-spacing: 0.04em;
+        }
+
+        .spin-icon {
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

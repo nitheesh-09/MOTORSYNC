@@ -87,27 +87,10 @@ export const Toolbar = ({
           </div>
         </div>
 
-        {/* Right Section: Motor Selector, Data Source Selector, Simulation & Status */}
+        {/* Right Section: Motor Context, Connection Status & Actions */}
         <div className="toolbar-right">
-          {/* Data Source Selector */}
-          <div className="data-source-selector-wrapper" title="Select ingestion source: External Acquisition Laptop or Synthetic Simulator">
-            <span className="data-source-label">
-              <Server size={12} className={isExternal ? "text-emerald" : "text-blue"} />
-              <span>DATA SOURCE:</span>
-            </span>
-            <select
-              className="data-source-select font-mono font-bold"
-              value={snapshot?.dataSourceType || DATA_SOURCE_TYPES.ESP32}
-              onChange={handleDataSourceChange}
-              id="global-data-source-select"
-            >
-              <option value={DATA_SOURCE_TYPES.ESP32}>ESP32 Real Hardware [ACTIVE]</option>
-              <option value={DATA_SOURCE_TYPES.EXTERNAL_LAPTOP}>External Data Acquisition</option>
-            </select>
-          </div>
-
-          {/* Single Monitored Real Motor (Requirement 6) */}
-          <div className="motor-selector-wrapper">
+          {/* Monitored Real Motor */}
+          <div className="motor-selector-wrapper" title="Physical Motor Asset">
             <span className="motor-selector-label">
               <Cpu size={12} className="text-blue" />
               <span>MOTOR:</span>
@@ -115,40 +98,25 @@ export const Toolbar = ({
             <div className="font-mono font-bold text-main px-8 py-3" style={{ fontSize: '12px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #cbd5e1', letterSpacing: '0.04em' }} id="global-motor-display">
               MTR-001
             </div>
-            {snapshot?.metrics && (
-              <span className={`badge badge-${snapshot.metrics.status === 'FAULT' ? 'fault' : snapshot.metrics.status === 'WARNING' ? 'warning' : snapshot.hasRealTelemetry ? 'healthy' : 'muted'} badge-sm font-mono`}>
-                {snapshot.hasRealTelemetry ? (snapshot.metrics.status || 'ONLINE') : 'DISCONNECTED'}
-              </span>
-            )}
           </div>
 
-          {/* Simulation Mode Selector for Live Evaluation */}
-          {!isExternal && snapshot?.dataSourceType !== DATA_SOURCE_TYPES.ESP32 && (
-            <div className="simulation-mode-wrapper">
-              <span className="sim-label">
-                <Zap size={12} className="text-amber" />
-                <span>SIMULATION MODE:</span>
-              </span>
-              <select
-                className="sim-select font-mono"
-                value={snapshot?.simulationMode || SIMULATION_MODES.HEALTHY}
-                onChange={handleModeChange}
-                id="simulation-mode-select"
-              >
-                {Object.values(SIMULATION_MODES).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Connection Status Indicator */}
+          <div className="connection-pill-wrapper">
+            <span className={`status-dot ${snapshot?.esp32Connected ? 'dot-connected' : snapshot?.hasRealTelemetry ? 'dot-stale' : 'dot-disconnected'}`} />
+            <span className="connection-pill-text font-mono">
+              {snapshot?.esp32Connected 
+                ? 'ESP32 CONNECTED' 
+                : snapshot?.hasRealTelemetry 
+                ? 'ESP32 STALE' 
+                : 'ESP32 WAITING'}
+            </span>
+          </div>
 
-          {/* Pause / Resume Button */}
+          {/* Pause / Resume Polling Button */}
           <button 
             className={`eng-btn eng-btn-secondary ${snapshot?.isPaused ? 'btn-paused' : ''}`}
             onClick={handleTogglePause}
-            title={snapshot?.isPaused ? 'Resume live ingestion ticker' : 'Pause live ingestion ticker'}
+            title={snapshot?.isPaused ? 'Resume live polling updates' : 'Pause live polling updates'}
             id="pause-simulation-btn"
           >
             {snapshot?.isPaused ? <Play size={12} /> : <Pause size={12} />}
@@ -162,40 +130,12 @@ export const Toolbar = ({
               telemetryService.refreshNow();
               if (onRefresh) onRefresh();
             }}
-            title="Force immediate sample tick"
+            title="Fetch latest telemetry from backend"
             id="refresh-telemetry-btn"
           >
             <RefreshCw size={12} />
             <span>REFRESH</span>
           </button>
-
-          {/* Prominent Data Source Indicator (Section 12, 14, 29) */}
-          {snapshot?.dataSourceType === DATA_SOURCE_TYPES.ESP32 ? (
-            <div className={`esp32-data-badge ${snapshot?.esp32Connected === false ? 'badge-stale' : ''}`} title="Data Source: ESP32 Hardware Real-Time Ingestion">
-              <span className="live-esp32-tag font-mono">LIVE MONITORING — SOURCE: ESP32 HARDWARE</span>
-              <Radio size={12} className="esp32-icon" />
-              <span className="esp32-text">
-                {snapshot?.esp32Connected === false ? 'ESP32 HARDWARE: STALE / DISCONNECTED' : 'ESP32 HARDWARE: CONNECTED'}
-              </span>
-              {snapshot?.esp32LastPacketAt && (
-                <span className="esp32-last-seen font-mono text-xs">
-                  Last Data: {new Date(snapshot.esp32LastPacketAt).toLocaleTimeString()}
-                </span>
-              )}
-            </div>
-          ) : isExternal ? (
-            <div className="external-data-badge" title="Data Source: External Data Acquisition Laptop. Telemetry features calculated externally and received over data ingestion network.">
-              <span className="live-external-tag font-mono">LIVE MONITORING — EXTERNAL DATA SOURCE</span>
-              <Radio size={12} className="external-icon" />
-              <span className="external-text">EXTERNAL ACQUISITION</span>
-            </div>
-          ) : (
-            <div className="esp32-data-badge badge-stale" title="ESP32 hardware is disconnected or waiting for raw sensor telemetry.">
-              <span className="live-esp32-tag font-mono">LIVE MONITORING — SOURCE: ESP32 HARDWARE</span>
-              <AlertTriangle size={12} className="text-amber" />
-              <span className="esp32-text font-bold text-amber">ESP32 DISCONNECTED</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -387,148 +327,42 @@ export const Toolbar = ({
           border-color: #fde68a !important;
         }
 
-        .synthetic-data-badge {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          padding: 4px 9px;
-          background: #fefce8;
-          border: 1px solid #fef08a;
-          border-radius: var(--radius-sm);
-          font-size: 10.5px;
-          cursor: help;
-        }
-
-        .synthetic-icon {
-          color: #b45309;
-        }
-
-        .live-sim-tag {
-          background: #eff6ff;
-          color: #1d4ed8;
-          border: 1px solid #bfdbfe;
-          padding: 1px 5px;
-          border-radius: 2px;
-          font-size: 9.5px;
-          font-weight: 700;
-          margin-right: 4px;
-        }
-
-        .synthetic-text {
-          font-family: var(--font-mono);
-          font-weight: 700;
-          letter-spacing: 0.04em;
-          color: #854d0e;
-        }
-
-        .data-source-selector-wrapper {
+        .connection-pill-wrapper {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 2px 6px 2px 8px;
+          padding: 4px 10px;
           background: #ffffff;
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-sm);
         }
 
-        .data-source-label {
-          font-size: 10px;
-          font-weight: 700;
-          letter-spacing: 0.05em;
-          color: var(--text-muted);
-          display: flex;
-          align-items: center;
-          gap: 4px;
+        .status-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
         }
 
-        .data-source-select {
-          border: none;
-          background: transparent;
+        .dot-connected {
+          background: #16a34a;
+          box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
+        }
+
+        .dot-stale {
+          background: #d97706;
+          box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.2);
+        }
+
+        .dot-disconnected {
+          background: #94a3b8;
+          box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.2);
+        }
+
+        .connection-pill-text {
+          font-size: 10.5px;
+          font-weight: 700;
           color: var(--text-main);
-          font-size: 11px;
-          font-weight: 700;
-          cursor: pointer;
-          outline: none;
-          padding: 2px;
-        }
-
-        .esp32-data-badge {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 10px;
-          background: #eff6ff;
-          border: 1px solid #93c5fd;
-          border-radius: var(--radius-sm);
-          font-size: 10.5px;
-          cursor: help;
-        }
-
-        .esp32-data-badge.badge-stale {
-          background: #fffbeb;
-          border-color: #fde68a;
-        }
-
-        .live-esp32-tag {
-          background: #1e40af;
-          color: #ffffff;
-          border: 1px solid #1d4ed8;
-          padding: 1px 6px;
-          border-radius: 2px;
-          font-size: 9.5px;
-          font-weight: 700;
-          letter-spacing: 0.04em;
-        }
-
-        .esp32-icon {
-          color: #2563eb;
-          animation: pulse 1.5s infinite ease-in-out;
-        }
-
-        .esp32-text {
-          font-family: var(--font-mono);
-          font-weight: 700;
-          letter-spacing: 0.04em;
-          color: #1e3a8a;
-        }
-
-        .esp32-last-seen {
-          color: #64748b;
-          margin-left: 4px;
-        }
-
-        .external-data-badge {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          padding: 4px 9px;
-          background: #ecfdf5;
-          border: 1px solid #a7f3d0;
-          border-radius: var(--radius-sm);
-          font-size: 10.5px;
-          cursor: help;
-        }
-
-        .live-external-tag {
-          background: #065f46;
-          color: #ffffff;
-          border: 1px solid #047857;
-          padding: 1px 5px;
-          border-radius: 2px;
-          font-size: 9.5px;
-          font-weight: 700;
-          margin-right: 4px;
-        }
-
-        .external-icon {
-          color: #059669;
-        }
-
-        .external-text {
-          font-family: var(--font-mono);
-          font-weight: 700;
-          letter-spacing: 0.04em;
-          color: #065f46;
+          letter-spacing: 0.03em;
         }
 
         .text-emerald {

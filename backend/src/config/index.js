@@ -17,7 +17,7 @@ export const config = {
   env: process.env.NODE_ENV || 'development',
   
   // Storage
-  databasePath: process.env.DATABASE_PATH || path.join(rootDir, 'data', 'motorsync.db'),
+  databasePath: process.env.DATABASE_PATH || (process.env.NODE_ENV === 'test' ? ':memory:' : path.join(rootDir, 'data', 'motorsync.db')),
   
   // Data Sources
   defaultDataSource: process.env.DATA_SOURCE || 'ESP32', // 'ESP32' | 'EXTERNAL_LAPTOP'

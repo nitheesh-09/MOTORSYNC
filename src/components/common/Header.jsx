@@ -66,11 +66,10 @@ export const Header = ({
 
         {/* Right Status Actions */}
         <div className="header-actions">
-          {/* Selected Motor Context Pill (Req 18) */}
-          <div className="selected-motor-header-badge" title={`Monitoring Asset: ${snapshot?.selectedMotor?.name || 'MTR-001'}`}>
+          {/* Selected Motor Context Pill */}
+          <div className="selected-motor-header-badge" title="Monitored Physical Asset: MTR-001">
             <span className="asset-tag-prefix font-mono">ASSET:</span>
-            <span className="font-mono font-bold text-main">{snapshot?.selectedMotorId || 'MTR-001'}</span>
-            <span className="asset-tag-sub font-mono text-muted">({snapshot?.selectedMotor?.shortName || 'MTR-001'})</span>
+            <span className="font-mono font-bold text-main">MTR-001</span>
           </div>
 
           {/* Live Monitoring Pulse */}
